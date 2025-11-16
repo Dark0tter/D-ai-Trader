@@ -1,0 +1,15 @@
+[Unit]
+Description=Dai Trader Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/dai-trader
+Environment="PATH=/root/dai-trader/venv/bin"
+ExecStart=/root/dai-trader/venv/bin/python /root/dai-trader/trading_bot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

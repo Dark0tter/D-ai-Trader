@@ -1,0 +1,29 @@
+# Core dependencies
+numpy>=1.24.0
+pandas>=2.0.0
+python-dotenv>=1.0.0
+
+# Market data and trading APIs
+alpaca-py>=0.8.0
+yfinance>=0.2.0
+polygon-api-client>=1.12.0
+
+# Machine learning and analysis
+scikit-learn>=1.3.0
+ta-lib>=0.4.0  # Technical analysis library (may require separate installation)
+pandas-ta>=0.3.14b
+
+# Database
+sqlalchemy>=2.0.0
+
+# Scheduling and async
+schedule>=1.2.0
+aiohttp>=3.9.0
+
+# Utilities
+python-dateutil>=2.8.2
+pytz>=2023.3
+requests>=2.31.0
+
+# Logging and monitoring
+colorlog>=6.7.0
