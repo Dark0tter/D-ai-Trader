@@ -1,5 +1,6 @@
 # Environment - NEVER commit this!
 .env
+CREDENTIALS.txt
 
 # Python
 __pycache__/
