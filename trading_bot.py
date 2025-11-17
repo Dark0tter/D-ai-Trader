@@ -16,6 +16,7 @@ from risk_manager import RiskManager
 from logger import setup_logging, PerformanceTracker, AlertSystem
 from database import Database
 from reinforcement_learning import QLearningAgent, AdaptiveStrategySelector
+from quarterly_manager import QuarterlyManager
 from overnight_analyzer import OvernightPatternAnalyzer
 from news_sentiment import NewsSentimentAnalyzer
 from options_flow_analyzer import OptionsFlowAnalyzer
@@ -58,6 +59,9 @@ class TradingBot:
         self.strategy_selector = AdaptiveStrategySelector()
         self.overnight_analyzer = OvernightPatternAnalyzer()
         
+        # Quarterly principal protection & gain distribution
+        self.quarterly_manager = QuarterlyManager()
+        
         # Multi-source intelligence analyzers
         self.news_analyzer = NewsSentimentAnalyzer()
         self.options_analyzer = OptionsFlowAnalyzer()
@@ -77,12 +81,16 @@ class TradingBot:
         self.watchlist = Config.WATCHLIST
         self.trade_states = {}  # Track states for RL learning
         
+        # Get quarterly status
+        q_status = self.quarterly_manager.get_status()
+        
         logger.info(f"Trading Mode: {Config.TRADING_MODE}")
         logger.info(f"Strategy: {self.strategy.name}")
         logger.info(f"Watchlist: {', '.join(self.watchlist)}")
         logger.info(f"Paper Trading: {Config.is_paper_trading()}")
         logger.info(f"AI Learning: ENABLED (Q-Learning + Adaptive Strategy)")
         logger.info(f"Intelligence Sources: 10+ APIs (News, Options, Insiders, Social, Economic, Crypto, Trends)")
+        logger.info(f"Quarterly Protection: {q_status['quarter']} | Daily Floor: ${q_status['daily_floor']:,.2f} | Recovery Mode: {q_status['in_recovery_mode']}")
         logger.info("="*60)
     
     def start(self):
@@ -130,6 +138,17 @@ class TradingBot:
             account_value = account['portfolio_value']
             logger.info(f"Portfolio Value: ${account_value:,.2f}")
             
+            # UPDATE QUARTERLY MANAGER - Track balance and calculate volatility
+            q_result = self.quarterly_manager.update_balance(account_value)
+            
+            if q_result['in_recovery']:
+                logger.warning(f"⚠️  RECOVERY MODE: Need ${q_result['recovery_needed']:.2f} to reach today's floor ${q_result['daily_floor']:.2f}")
+            elif q_result['can_distribute']:
+                logger.info(f"📈 Above Floor: Today's Gains=${q_result['current_gain']:.2f} | Distributable (40%)=${q_result['distributable_amount']:.2f}")
+            
+            # Get quarterly risk adjustment (reduces position sizes based on volatility/drawdown)
+            quarterly_risk_multiplier = self.quarterly_manager.get_risk_adjustment()
+            
             # SAFE MODE CHECK - Evaluate market safety
             all_intelligence = {
                 'macro': self.fred_analyzer.get_economic_regime(),
@@ -163,6 +182,14 @@ class TradingBot:
                 logger.warning(safe_reason)
                 logger.warning(f"💰 Position sizing reduced to {risk_reduction*100:.0f}%")
             
+            # Combine Safe Mode and Quarterly risk adjustments
+            combined_risk_multiplier = risk_reduction * quarterly_risk_multiplier
+            
+            if quarterly_risk_multiplier < 1.0:
+                logger.warning(f"📊 Quarterly risk adjustment: {quarterly_risk_multiplier*100:.0f}% (volatility/drawdown protection)")
+            
+            logger.info(f"🎯 Combined risk multiplier: {combined_risk_multiplier*100:.0f}%")
+            
             # Check risk limits
             can_trade, reason = self.risk_manager.can_trade(account_value)
             if not can_trade:
@@ -173,8 +200,8 @@ class TradingBot:
             # Update positions with stop loss/take profit checks
             self.manage_positions(account_value)
             
-            # Scan watchlist for new opportunities (with safe mode risk reduction)
-            self.scan_opportunities(account_value, risk_reduction)
+            # Scan watchlist for new opportunities (with combined risk reduction)
+            self.scan_opportunities(account_value, combined_risk_multiplier)
             
             # Save portfolio snapshot
             self.save_portfolio_snapshot(account_value)
@@ -625,6 +652,41 @@ class TradingBot:
         # Crypto sentiment
         crypto = self.crypto_tracker.get_crypto_sentiment()
         logger.info(f"₿ Crypto - Signal: {crypto['signal']}, BTC 24h: {crypto['btc_change_24h']:+.1f}%")
+        
+        # QUARTERLY PROTECTION SUMMARY
+        logger.info("="*60)
+        logger.info("DAILY RATCHETING PRINCIPAL PROTECTION")
+        logger.info("="*60)
+        q_status = self.quarterly_manager.get_status()
+        logger.info(f"Quarter: {q_status['quarter']}")
+        logger.info(f"Quarter Start Principal: ${q_status['quarter_start_principal']:,.2f}")
+        logger.info(f"Today's Floor (Ratcheted): ${q_status['daily_floor']:,.2f}")
+        logger.info(f"Yesterday's Floor: ${q_status['yesterday_floor']:,.2f}")
+        logger.info(f"Current Balance: ${q_status['current_balance']:,.2f}")
+        logger.info(f"Today's Gain: ${q_status['todays_gain']:,.2f}")
+        logger.info(f"Quarter Total Gain: ${q_status['quarter_total_gain']:,.2f}")
+        logger.info(f"Recovery Mode: {q_status['in_recovery_mode']}")
+        
+        if q_status['todays_gain'] > 0:
+            distributable = q_status['todays_gain'] * 0.40
+            stays_in = q_status['todays_gain'] * 0.60
+            logger.info(f"💰 Available to Distribute (40% of today): ${distributable:,.2f}")
+            logger.info(f"📈 Stays In System (60%): ${stays_in:,.2f} → Tomorrow's Floor")
+        
+        logger.info(f"Total Distributed This Quarter: ${q_status['total_distributed']:,.2f}")
+        logger.info(f"Volatility Score: {q_status['volatility_score']:.1f}/100")
+        logger.info(f"Max Drawdown: {q_status['max_drawdown_pct']:.2f}%")
+        logger.info(f"Risk Adjustment: {q_status['risk_adjustment']*100:.0f}%")
+        
+        # Calculate and update volatility for next day
+        recent_trades = self.database.get_recent_trades(days=5)
+        if len(recent_trades) > 0:
+            returns = [t.get('pnl_pct', 0) for t in recent_trades if 'pnl_pct' in t]
+            if returns:
+                import numpy as np
+                volatility = np.std(returns) * 100  # Convert to 0-100 scale
+                self.quarterly_manager.update_volatility(volatility)
+                logger.info(f"📊 5-Day Volatility Updated: {volatility:.1f}")
         
         logger.info("="*60)
     
