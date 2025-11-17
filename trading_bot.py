@@ -15,6 +15,7 @@ from strategies import StrategyFactory
 from risk_manager import RiskManager
 from logger import setup_logging, PerformanceTracker, AlertSystem
 from database import Database
+from reinforcement_learning import QLearningAgent, AdaptiveStrategySelector
 
 logger = logging.getLogger(__name__)
 
@@ -41,14 +42,20 @@ class TradingBot:
         self.alert_system = AlertSystem()
         self.database = Database()
         
+        # Reinforcement Learning components
+        self.rl_agent = QLearningAgent(learning_rate=0.1, discount_factor=0.95, epsilon=0.2)
+        self.strategy_selector = AdaptiveStrategySelector()
+        
         # State
         self.is_running = False
         self.watchlist = Config.WATCHLIST
+        self.trade_states = {}  # Track states for RL learning
         
         logger.info(f"Trading Mode: {Config.TRADING_MODE}")
         logger.info(f"Strategy: {self.strategy.name}")
         logger.info(f"Watchlist: {', '.join(self.watchlist)}")
         logger.info(f"Paper Trading: {Config.is_paper_trading()}")
+        logger.info(f"AI Learning: ENABLED (Q-Learning + Adaptive Strategy)")
         logger.info("="*60)
     
     def start(self):
@@ -163,12 +170,31 @@ class TradingBot:
                 
                 data = self.market_data.calculate_technical_indicators(data)
                 
-                # Generate signal
-                signal = self.strategy.generate_signals(symbol, data)
+                # Generate traditional signal
+                traditional_signal = self.strategy.generate_signals(symbol, data)
                 
-                if signal == 'BUY':
+                # Get RL-enhanced signal
+                latest = data.iloc[-1]
+                market_state_data = {
+                    'RSI': latest.get('RSI', 50),
+                    'MACD': latest.get('MACD', 0),
+                    'price_change_pct': ((latest['Close'] - data.iloc[-2]['Close']) / data.iloc[-2]['Close']) * 100,
+                    'volume_ratio': latest.get('Volume', 0) / latest.get('Volume_MA', 1) if 'Volume_MA' in latest else 1.0
+                }
+                
+                market_state = self.rl_agent.get_state(market_state_data)
+                rl_signal = self.rl_agent.get_action(market_state, traditional_signal)
+                
+                # Store state for learning when position closes
+                if rl_signal == 'BUY':
                     current_price = self.market_data.get_realtime_price(symbol)
                     if current_price:
+                        self.trade_states[symbol] = {
+                            'state': market_state,
+                            'action': rl_signal,
+                            'entry_time': datetime.now(),
+                            'entry_price': current_price
+                        }
                         self.execute_buy(symbol, current_price, account_value)
                         
             except Exception as e:
@@ -226,6 +252,43 @@ class TradingBot:
                 pnl_pct = position['unrealized_plpc']
                 
                 logger.info(f"Position closed: {symbol}, P&L: ${pnl:.2f} ({pnl_pct*100:.2f}%)")
+                
+                # Reinforcement Learning: Update Q-values based on trade result
+                if symbol in self.trade_states:
+                    trade_data = self.trade_states[symbol]
+                    holding_time = (datetime.now() - trade_data['entry_time']).total_seconds() / 3600
+                    
+                    # Calculate reward
+                    reward = self.rl_agent.calculate_reward(pnl, pnl_pct, holding_time)
+                    
+                    # Get new market state
+                    data = self.market_data.get_historical_data(symbol, period='1d', interval='1m')
+                    if not data.empty:
+                        data = self.market_data.calculate_technical_indicators(data)
+                        latest = data.iloc[-1]
+                        new_market_data = {
+                            'RSI': latest.get('RSI', 50),
+                            'MACD': latest.get('MACD', 0),
+                            'price_change_pct': 0,
+                            'volume_ratio': 1.0
+                        }
+                        new_state = self.rl_agent.get_state(new_market_data)
+                        
+                        # Update Q-learning
+                        self.rl_agent.update_q_value(
+                            trade_data['state'],
+                            trade_data['action'],
+                            reward,
+                            new_state
+                        )
+                    
+                    # Update strategy selector
+                    self.strategy_selector.record_trade(self.strategy.name.lower(), pnl)
+                    
+                    # Clear trade state
+                    del self.trade_states[symbol]
+                    
+                    logger.info(f"AI Learning: Reward={reward:.3f}, Total Trades={self.rl_agent.trade_count}")
                 
                 # Record trade
                 self.risk_manager.record_trade(symbol, pnl)
@@ -292,6 +355,18 @@ class TradingBot:
         risk_summary = self.risk_manager.get_risk_summary()
         logger.info(f"Daily P&L: ${risk_summary['daily_pnl']:.2f}")
         logger.info(f"Trades Today: {risk_summary['trade_count_today']}")
+        
+        # AI Learning summary
+        rl_stats = self.rl_agent.get_performance_stats()
+        logger.info("="*60)
+        logger.info("AI LEARNING STATS")
+        logger.info("="*60)
+        logger.info(f"States Learned: {rl_stats['states_learned']}")
+        logger.info(f"Total Trades Learned From: {rl_stats['total_trades']}")
+        logger.info(f"AI Win Rate: {rl_stats['win_rate']:.2f}%")
+        logger.info(f"Average Reward: {rl_stats['avg_reward']:.3f}")
+        logger.info(f"Current Strategy: {self.strategy_selector.current_strategy}")
+        logger.info(f"Exploration Rate: {rl_stats['exploration_rate']:.2f}")
         
         logger.info("="*60)
     
