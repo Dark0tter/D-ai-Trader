@@ -26,6 +26,7 @@ from economic_calendar import EconomicCalendar
 from fred_analyzer import FREDAnalyzer
 from crypto_correlation import CryptoCorrelationTracker
 from trends_analyzer import GoogleTrendsAnalyzer
+from safe_mode import SafeMode
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,9 @@ class TradingBot:
         self.fred_analyzer = FREDAnalyzer()
         self.crypto_tracker = CryptoCorrelationTracker()
         self.trends_analyzer = GoogleTrendsAnalyzer()
+        
+        # Safe Mode - Automatic risk protection
+        self.safe_mode = SafeMode()
         
         # State
         self.is_running = False
@@ -126,6 +130,39 @@ class TradingBot:
             account_value = account['portfolio_value']
             logger.info(f"Portfolio Value: ${account_value:,.2f}")
             
+            # SAFE MODE CHECK - Evaluate market safety
+            all_intelligence = {
+                'macro': self.fred_analyzer.get_economic_regime(),
+                'crypto': self.crypto_tracker.get_crypto_sentiment(),
+                'economic': self.economic_calendar.get_todays_events()
+            }
+            
+            account_performance = {
+                'daily_pnl_pct': 0,  # TODO: Calculate from database
+                'losing_streak': 0   # TODO: Calculate from recent trades
+            }
+            
+            is_safe, safe_reason, risk_reduction = self.safe_mode.evaluate_market_safety(
+                all_intelligence, account_performance
+            )
+            
+            # Check for emergency exit
+            should_emergency_exit, exit_reason = self.safe_mode.should_close_all_positions(
+                all_intelligence, account_performance
+            )
+            
+            if should_emergency_exit:
+                logger.critical(exit_reason)
+                logger.critical("🚨 CLOSING ALL POSITIONS IMMEDIATELY")
+                self.broker.close_all_positions()
+                self.alert_system.risk_alert(exit_reason)
+                return
+            
+            # Log safe mode status
+            if risk_reduction < 1.0:
+                logger.warning(safe_reason)
+                logger.warning(f"💰 Position sizing reduced to {risk_reduction*100:.0f}%")
+            
             # Check risk limits
             can_trade, reason = self.risk_manager.can_trade(account_value)
             if not can_trade:
@@ -136,8 +173,8 @@ class TradingBot:
             # Update positions with stop loss/take profit checks
             self.manage_positions(account_value)
             
-            # Scan watchlist for new opportunities
-            self.scan_opportunities(account_value)
+            # Scan watchlist for new opportunities (with safe mode risk reduction)
+            self.scan_opportunities(account_value, risk_reduction)
             
             # Save portfolio snapshot
             self.save_portfolio_snapshot(account_value)
@@ -170,7 +207,7 @@ class TradingBot:
                 # Update trailing stop
                 self.risk_manager.update_stop_loss_trailing(symbol, current_price, entry_price)
     
-    def scan_opportunities(self, account_value: float):
+    def scan_opportunities(self, account_value: float, safe_mode_reduction: float = 1.0):
         """Scan watchlist for trading opportunities."""
         # Get current positions to avoid duplicates
         positions = self.broker.get_positions()
@@ -181,6 +218,11 @@ class TradingBot:
         # 30% Medium Risk - swing trades, moderate conviction
         # 50% Low Risk - long-term holds, stable growth
         # Bot can take unlimited positions, but capital is allocated by risk tier
+        
+        # Apply safe mode reduction to all allocations
+        if safe_mode_reduction == 0.0:
+            logger.warning("🚫 SAFE MODE: No new trades allowed")
+            return
         
         for symbol in self.watchlist:
             if symbol in position_symbols:
@@ -243,13 +285,14 @@ class TradingBot:
                             'position_boost': unified_boost,
                             'risk_tier': risk_tier
                         }
-                        self.execute_buy(symbol, current_price, account_value, unified_boost, risk_tier)
+                        self.execute_buy(symbol, current_price, account_value, unified_boost, risk_tier, safe_mode_reduction)
                         
             except Exception as e:
                 logger.error(f"Error scanning {symbol}: {e}")
     
     def execute_buy(self, symbol: str, price: float, account_value: float, 
-                    sentiment_boost: float = 1.0, risk_tier: str = 'MEDIUM'):
+                    sentiment_boost: float = 1.0, risk_tier: str = 'MEDIUM', 
+                    safe_mode_reduction: float = 1.0):
         """Execute a buy order with risk-based position sizing."""
         try:
             # Risk-based capital allocation (NO POSITION LIMITS)
@@ -258,10 +301,16 @@ class TradingBot:
             # LOW RISK: 50% of total capital
             
             # Calculate how much capital is allocated to each risk tier
-            risk_capital_allocation = {
+            base_allocation = {
                 'HIGH': account_value * 0.20,    # 20% of total capital
                 'MEDIUM': account_value * 0.30,  # 30% of total capital
                 'LOW': account_value * 0.50      # 50% of total capital
+            }
+            
+            # Apply safe mode reduction
+            risk_capital_allocation = {
+                tier: amount * safe_mode_reduction 
+                for tier, amount in base_allocation.items()
             }
             
             # Get current positions to calculate used capital per tier

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
     <title>Dai Trader Dashboard</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
 </head>
@@ -18,6 +18,111 @@
                 </div>
             </div>
         </header>
+
+        <!-- Bot Control Panel -->
+        <div class="control-panel">
+            <div class="container">
+                <h2>🎛️ Bot Controls</h2>
+                <div class="controls-grid">
+                    <div class="control-card">
+                        <div class="control-header">
+                            <span class="control-icon">🛡️</span>
+                            <h3>Safe Mode</h3>
+                        </div>
+                        <p class="control-description">Automatically reduce risk during unfavorable market conditions</p>
+                        <div class="toggle-container">
+                            <label class="toggle">
+                                <input type="checkbox" id="toggle-safe-mode" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="safe-mode-status" class="toggle-status">Enabled</span>
+                        </div>
+                        <div id="safe-mode-info" class="control-info"></div>
+                    </div>
+                    
+                    <div class="control-card">
+                        <div class="control-header">
+                            <span class="control-icon">🤖</span>
+                            <h3>Trading Bot</h3>
+                        </div>
+                        <p class="control-description">Start or stop the automated trading bot</p>
+                        <div class="toggle-container">
+                            <label class="toggle">
+                                <input type="checkbox" id="toggle-bot" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="bot-status" class="toggle-status active">Running</span>
+                        </div>
+                    </div>
+                    
+                    <div class="control-card">
+                        <div class="control-header">
+                            <span class="control-icon">⚖️</span>
+                            <h3>Risk Level</h3>
+                        </div>
+                        <p class="control-description">Adjust overall risk tolerance</p>
+                        <select id="risk-level" class="control-select">
+                            <option value="conservative">Conservative (Low Risk)</option>
+                            <option value="moderate" selected>Moderate (Balanced)</option>
+                            <option value="aggressive">Aggressive (High Risk)</option>
+                        </select>
+                        <div class="risk-breakdown">
+                            <div class="risk-bar">
+                                <span>High Risk: <strong id="risk-high">20%</strong></span>
+                                <div class="progress-bar"><div class="progress high" style="width: 20%"></div></div>
+                            </div>
+                            <div class="risk-bar">
+                                <span>Medium Risk: <strong id="risk-medium">30%</strong></span>
+                                <div class="progress-bar"><div class="progress medium" style="width: 30%"></div></div>
+                            </div>
+                            <div class="risk-bar">
+                                <span>Low Risk: <strong id="risk-low">50%</strong></span>
+                                <div class="progress-bar"><div class="progress low" style="width: 50%"></div></div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="control-card">
+                        <div class="control-header">
+                            <span class="control-icon">🧠</span>
+                            <h3>AI Learning</h3>
+                        </div>
+                        <p class="control-description">Enable reinforcement learning for strategy optimization</p>
+                        <div class="toggle-container">
+                            <label class="toggle">
+                                <input type="checkbox" id="toggle-learning" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="learning-status" class="toggle-status">Active</span>
+                        </div>
+                    </div>
+                    
+                    <div class="control-card">
+                        <div class="control-header">
+                            <span class="control-icon">🔔</span>
+                            <h3>Alerts</h3>
+                        </div>
+                        <p class="control-description">Enable notifications for trades and important events</p>
+                        <div class="toggle-container">
+                            <label class="toggle">
+                                <input type="checkbox" id="toggle-alerts" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="alerts-status" class="toggle-status">Enabled</span>
+                        </div>
+                    </div>
+                    
+                    <div class="control-card emergency">
+                        <div class="control-header">
+                            <span class="control-icon">🚨</span>
+                            <h3>Emergency Stop</h3>
+                        </div>
+                        <p class="control-description">Immediately close all positions and halt trading</p>
+                        <button id="emergency-stop" class="btn-emergency">STOP ALL TRADING</button>
+                    </div>
+                </div>
+            </div>
+        </div>
 
         <!-- Main Content -->
         <div class="container">
@@ -95,9 +200,10 @@
             <!-- Current Positions -->
             <section class="section">
                 <h2>Current Positions</h2>
-                <div class="table-container">
-                    <table id="positions-table">
-                        <thead>
+                <div class="table-wrapper">
+                    <div class="table-container">
+                        <table id="positions-table">
+                            <thead>
                             <tr>
                                 <th>Symbol</th>
                                 <th>Qty</th>
@@ -115,13 +221,15 @@
                         </tbody>
                     </table>
                 </div>
+                </div>
             </section>
 
             <!-- Recent Trades -->
             <section class="section">
                 <h2>Recent Trades</h2>
-                <div class="table-container">
-                    <table id="trades-table">
+                <div class="table-wrapper">
+                    <div class="table-container">
+                        <table id="trades-table">
                         <thead>
                             <tr>
                                 <th>Date</th>
@@ -140,6 +248,7 @@
                             </tr>
                         </tbody>
                     </table>
+                </div>
                 </div>
             </section>
 

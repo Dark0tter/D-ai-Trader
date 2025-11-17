@@ -1,5 +1,6 @@
 // Dashboard JavaScript - Real-time updates
 let portfolioChart = null;
+let botState = {};
 
 // Format currency
 function formatCurrency(value) {
@@ -26,6 +27,225 @@ function formatDate(dateString) {
         hour: '2-digit',
         minute: '2-digit'
     });
+}
+
+// Load bot state and initialize controls
+async function loadBotState() {
+    try {
+        const response = await fetch('/api/bot-state');
+        const data = await response.json();
+        
+        if (data.success) {
+            botState = data.state;
+            updateControlsUI();
+        }
+    } catch (error) {
+        console.error('Error loading bot state:', error);
+    }
+}
+
+// Update controls UI based on state
+function updateControlsUI() {
+    // Safe Mode
+    document.getElementById('toggle-safe-mode').checked = botState.safe_mode;
+    document.getElementById('safe-mode-status').textContent = botState.safe_mode ? 'Enabled' : 'Disabled';
+    document.getElementById('safe-mode-status').classList.toggle('active', botState.safe_mode);
+    
+    // Bot Running
+    document.getElementById('toggle-bot').checked = botState.bot_running;
+    document.getElementById('bot-status').textContent = botState.bot_running ? 'Running' : 'Stopped';
+    document.getElementById('bot-status').classList.toggle('active', botState.bot_running);
+    
+    // Risk Level
+    document.getElementById('risk-level').value = botState.risk_level || 'moderate';
+    updateRiskBreakdown(botState.risk_level || 'moderate');
+    
+    // AI Learning
+    document.getElementById('toggle-learning').checked = botState.ai_learning;
+    document.getElementById('learning-status').textContent = botState.ai_learning ? 'Active' : 'Paused';
+    document.getElementById('learning-status').classList.toggle('active', botState.ai_learning);
+    
+    // Alerts
+    document.getElementById('toggle-alerts').checked = botState.alerts;
+    document.getElementById('alerts-status').textContent = botState.alerts ? 'Enabled' : 'Disabled';
+    document.getElementById('alerts-status').classList.toggle('active', botState.alerts);
+}
+
+// Update risk breakdown visualization
+function updateRiskBreakdown(level) {
+    let high, medium, low;
+    
+    switch(level) {
+        case 'conservative':
+            high = 10; medium = 20; low = 70;
+            break;
+        case 'aggressive':
+            high = 40; medium = 35; low = 25;
+            break;
+        default: // moderate
+            high = 20; medium = 30; low = 50;
+    }
+    
+    document.getElementById('risk-high').textContent = high + '%';
+    document.getElementById('risk-medium').textContent = medium + '%';
+    document.getElementById('risk-low').textContent = low + '%';
+    
+    document.querySelector('.progress.high').style.width = high + '%';
+    document.querySelector('.progress.medium').style.width = medium + '%';
+    document.querySelector('.progress.low').style.width = low + '%';
+}
+
+// Update bot state on server
+async function updateBotState(updates) {
+    try {
+        const response = await fetch('/api/bot-state', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(updates)
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            botState = data.state;
+            showNotification('Settings updated successfully', 'success');
+        } else {
+            showNotification('Error updating settings: ' + data.error, 'error');
+        }
+    } catch (error) {
+        console.error('Error updating bot state:', error);
+        showNotification('Error updating settings', 'error');
+    }
+}
+
+// Show notification
+function showNotification(message, type) {
+    const notification = document.createElement('div');
+    notification.className = `notification ${type}`;
+    notification.textContent = message;
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 16px 24px;
+        background: ${type === 'success' ? '#10b981' : '#ef4444'};
+        color: white;
+        border-radius: 8px;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        z-index: 10000;
+        font-weight: 600;
+        animation: slideIn 0.3s ease;
+    `;
+    
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+        notification.style.animation = 'slideOut 0.3s ease';
+        setTimeout(() => notification.remove(), 300);
+    }, 3000);
+}
+
+// Initialize control event listeners
+function initializeControls() {
+    // Safe Mode Toggle
+    document.getElementById('toggle-safe-mode').addEventListener('change', (e) => {
+        updateBotState({ safe_mode: e.target.checked });
+        updateSafeModeInfo();
+    });
+    
+    // Bot Running Toggle
+    document.getElementById('toggle-bot').addEventListener('change', (e) => {
+        if (!e.target.checked) {
+            if (!confirm('Are you sure you want to stop the trading bot?')) {
+                e.target.checked = true;
+                return;
+            }
+        }
+        updateBotState({ bot_running: e.target.checked });
+    });
+    
+    // Risk Level Select
+    document.getElementById('risk-level').addEventListener('change', (e) => {
+        updateBotState({ risk_level: e.target.value });
+        updateRiskBreakdown(e.target.value);
+    });
+    
+    // AI Learning Toggle
+    document.getElementById('toggle-learning').addEventListener('change', (e) => {
+        updateBotState({ ai_learning: e.target.checked });
+    });
+    
+    // Alerts Toggle
+    document.getElementById('toggle-alerts').addEventListener('change', (e) => {
+        updateBotState({ alerts: e.target.checked });
+    });
+    
+    // Emergency Stop
+    document.getElementById('emergency-stop').addEventListener('click', async () => {
+        if (!confirm('⚠️ EMERGENCY STOP\n\nThis will immediately:\n• Close all open positions\n• Halt the trading bot\n\nAre you sure?')) {
+            return;
+        }
+        
+        if (!confirm('This action cannot be undone. Proceed with emergency stop?')) {
+            return;
+        }
+        
+        try {
+            const response = await fetch('/api/emergency-stop', {
+                method: 'POST'
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                showNotification('Emergency stop executed', 'success');
+                await loadBotState();
+                await loadData();
+            } else {
+                showNotification('Error: ' + data.error, 'error');
+            }
+        } catch (error) {
+            console.error('Error executing emergency stop:', error);
+            showNotification('Error executing emergency stop', 'error');
+        }
+    });
+}
+
+// Update safe mode info display
+async function updateSafeModeInfo() {
+    try {
+        const response = await fetch('/api/safe-mode-status');
+        const data = await response.json();
+        
+        if (data.success && data.safe_mode) {
+            const sm = data.safe_mode;
+            const infoDiv = document.getElementById('safe-mode-info');
+            
+            let statusColor = '#10b981'; // green
+            if (sm.danger_score >= 80) statusColor = '#dc2626';
+            else if (sm.danger_score >= 60) statusColor = '#f59e0b';
+            else if (sm.danger_score >= 40) statusColor = '#f97316';
+            
+            infoDiv.innerHTML = `
+                <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                    <span>Danger Score:</span>
+                    <strong style="color: ${statusColor}">${sm.danger_score}/100</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between;">
+                    <span>Status:</span>
+                    <strong>${sm.status}</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between;">
+                    <span>Capital Multiplier:</span>
+                    <strong>${(sm.risk_reduction * 100).toFixed(0)}%</strong>
+                </div>
+            `;
+        }
+    } catch (error) {
+        console.error('Error updating safe mode info:', error);
+    }
 }
 
 // Update account overview
@@ -272,11 +492,35 @@ async function fetchAllData() {
     }
 }
 
+// CSS for animations
+const style = document.createElement('style');
+style.textContent = `
+    @keyframes slideIn {
+        from { transform: translateX(100%); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+    }
+    @keyframes slideOut {
+        from { transform: translateX(0); opacity: 1; }
+        to { transform: translateX(100%); opacity: 0; }
+    }
+`;
+document.head.appendChild(style);
+
 // Initialize
 document.addEventListener('DOMContentLoaded', function() {
-    // Initial load
+    // Load bot state and initialize controls
+    loadBotState();
+    initializeControls();
+    
+    // Initial data load
     fetchAllData();
+    
+    // Update safe mode info
+    updateSafeModeInfo();
     
     // Auto-refresh every 10 seconds
     setInterval(fetchAllData, 10000);
+    
+    // Update safe mode info every 30 seconds
+    setInterval(updateSafeModeInfo, 30000);
 });

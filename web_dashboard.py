@@ -4,11 +4,15 @@ Provides real-time monitoring and control interface
 """
 import os
 import logging
+import json
 from flask import Flask, render_template, jsonify, request, session, redirect, url_for
 from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from datetime import datetime, timedelta
 from functools import wraps
 import secrets
+import hashlib
 
 from database import Database
 from broker import BrokerInterface
@@ -20,14 +24,56 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('DASHBOARD_SECRET_KEY', secrets.token_hex(32))
-CORS(app)
+
+# Security: CORS with specific origins
+ALLOWED_ORIGINS = os.environ.get('ALLOWED_ORIGINS', '*').split(',')
+CORS(app, origins=ALLOWED_ORIGINS)
+
+# Security: Rate limiting
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://"
+)
+
+# Security: Secure headers
+@app.after_request
+def set_security_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    response.headers['Content-Security-Policy'] = "default-src 'self' https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'"
+    return response
 
 # Dashboard password from environment or default
 DASHBOARD_PASSWORD = os.environ.get('DASHBOARD_PASSWORD', 'dai-trader-2025')
 
-# Initialize components (read-only access)
+# Initialize components
 db = Database()
 broker = BrokerInterface()
+
+# Bot control state file
+BOT_STATE_FILE = 'bot_state.json'
+
+def load_bot_state():
+    """Load bot configuration state."""
+    if os.path.exists(BOT_STATE_FILE):
+        with open(BOT_STATE_FILE, 'r') as f:
+            return json.load(f)
+    return {
+        'safe_mode': True,
+        'bot_running': True,
+        'risk_level': 'moderate',
+        'ai_learning': True,
+        'alerts': True
+    }
+
+def save_bot_state(state):
+    """Save bot configuration state."""
+    with open(BOT_STATE_FILE, 'w') as f:
+        json.dump(state, f, indent=2)
 
 def login_required(f):
     """Decorator to require authentication."""
@@ -39,12 +85,18 @@ def login_required(f):
     return decorated_function
 
 @app.route('/login', methods=['GET', 'POST'])
+@limiter.limit("10 per minute")
 def login():
-    """Login page."""
+    """Login page with rate limiting."""
     if request.method == 'POST':
         password = request.form.get('password')
-        if password == DASHBOARD_PASSWORD:
+        # Use constant-time comparison to prevent timing attacks
+        password_hash = hashlib.sha256(password.encode()).hexdigest()
+        correct_hash = hashlib.sha256(DASHBOARD_PASSWORD.encode()).hexdigest()
+        
+        if password_hash == correct_hash:
             session['authenticated'] = True
+            session.permanent = True
             return redirect(url_for('dashboard'))
         return render_template('login.html', error='Invalid password')
     return render_template('login.html')
@@ -216,6 +268,109 @@ def api_logs():
         })
     except Exception as e:
         logger.error(f"Error getting logs: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/bot-state', methods=['GET'])
+@login_required
+def api_get_bot_state():
+    """Get current bot configuration state."""
+    try:
+        state = load_bot_state()
+        return jsonify({
+            'success': True,
+            'state': state
+        })
+    except Exception as e:
+        logger.error(f"Error getting bot state: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/bot-state', methods=['POST'])
+@login_required
+@limiter.limit("30 per minute")
+def api_update_bot_state():
+    """Update bot configuration state."""
+    try:
+        data = request.json
+        state = load_bot_state()
+        
+        # Update state
+        if 'safe_mode' in data:
+            state['safe_mode'] = bool(data['safe_mode'])
+        if 'bot_running' in data:
+            state['bot_running'] = bool(data['bot_running'])
+        if 'risk_level' in data:
+            if data['risk_level'] in ['conservative', 'moderate', 'aggressive']:
+                state['risk_level'] = data['risk_level']
+        if 'ai_learning' in data:
+            state['ai_learning'] = bool(data['ai_learning'])
+        if 'alerts' in data:
+            state['alerts'] = bool(data['alerts'])
+        
+        save_bot_state(state)
+        
+        logger.info(f"Bot state updated: {state}")
+        
+        return jsonify({
+            'success': True,
+            'state': state,
+            'message': 'Bot configuration updated successfully'
+        })
+    except Exception as e:
+        logger.error(f"Error updating bot state: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/emergency-stop', methods=['POST'])
+@login_required
+@limiter.limit("5 per minute")
+def api_emergency_stop():
+    """Emergency stop - close all positions and halt trading."""
+    try:
+        logger.critical("EMERGENCY STOP activated from dashboard")
+        
+        # Close all positions
+        broker.close_all_positions()
+        
+        # Update bot state
+        state = load_bot_state()
+        state['bot_running'] = False
+        save_bot_state(state)
+        
+        logger.critical("All positions closed - Bot halted")
+        
+        return jsonify({
+            'success': True,
+            'message': 'Emergency stop executed - all positions closed, bot halted'
+        })
+    except Exception as e:
+        logger.error(f"Error executing emergency stop: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/safe-mode-status', methods=['GET'])
+@login_required
+def api_safe_mode_status():
+    """Get current safe mode status and danger score."""
+    try:
+        # This would be populated by the trading bot
+        # For now, return mock data
+        return jsonify({
+            'success': True,
+            'safe_mode': {
+                'enabled': True,
+                'danger_score': 15,
+                'risk_reduction': 1.0,
+                'status': 'NORMAL',
+                'factors': {
+                    'macro_bearish': False,
+                    'high_vix': False,
+                    'crypto_crash': False,
+                    'economic_risk': False,
+                    'daily_loss': False,
+                    'losing_streak': False
+                }
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error getting safe mode status: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 def main():

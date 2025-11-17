@@ -27,9 +27,10 @@ requests>=2.31.0
 # Logging and monitoring
 colorlog>=6.7.0
 
-# Web dashboard
+# Web Dashboard
 flask>=3.0.0
 flask-cors>=4.0.0
+flask-limiter>=3.5.0
 
 # Multi-source intelligence APIs
 beautifulsoup4>=4.12.0  # For SEC EDGAR parsing
