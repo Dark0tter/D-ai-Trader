@@ -16,6 +16,7 @@ from risk_manager import RiskManager
 from logger import setup_logging, PerformanceTracker, AlertSystem
 from database import Database
 from reinforcement_learning import QLearningAgent, AdaptiveStrategySelector
+from overnight_analyzer import OvernightPatternAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ class TradingBot:
         # Reinforcement Learning components
         self.rl_agent = QLearningAgent(learning_rate=0.1, discount_factor=0.95, epsilon=0.2)
         self.strategy_selector = AdaptiveStrategySelector()
+        self.overnight_analyzer = OvernightPatternAnalyzer()
         
         # State
         self.is_running = False
@@ -55,7 +57,7 @@ class TradingBot:
         logger.info(f"Strategy: {self.strategy.name}")
         logger.info(f"Watchlist: {', '.join(self.watchlist)}")
         logger.info(f"Paper Trading: {Config.is_paper_trading()}")
-        logger.info(f"AI Learning: ENABLED (Q-Learning + Adaptive Strategy)")
+        logger.info(f"AI Learning: ENABLED (Q-Learning + Adaptive Strategy + Overnight Analysis)")
         logger.info("="*60)
     
     def start(self):
@@ -171,6 +173,9 @@ class TradingBot:
                 
                 data = self.market_data.calculate_technical_indicators(data)
                 
+                # Check overnight prediction for this symbol
+                overnight_prediction = self.overnight_analyzer.get_next_day_prediction(symbol)
+                
                 # Generate traditional signal
                 traditional_signal = self.strategy.generate_signals(symbol, data)
                 
@@ -186,15 +191,34 @@ class TradingBot:
                 market_state = self.rl_agent.get_state(market_state_data)
                 rl_signal = self.rl_agent.get_action(market_state, traditional_signal)
                 
+                # Combine signals with overnight prediction
+                final_signal = rl_signal
+                
+                # If we have a high-confidence overnight prediction, use it to adjust decision
+                if overnight_prediction:
+                    overnight_action = overnight_prediction.get('recommended_action', 'HOLD')
+                    confidence = overnight_prediction.get('confidence', 0)
+                    
+                    if confidence > 70:
+                        # High confidence overnight prediction influences decision
+                        if overnight_action == 'BUY' and rl_signal == 'HOLD':
+                            final_signal = 'BUY'
+                            logger.info(f"🌙 {symbol}: Overnight prediction upgraded HOLD to BUY "
+                                       f"(confidence: {confidence}%)")
+                        elif overnight_action == 'WAIT' and rl_signal == 'BUY':
+                            final_signal = 'HOLD'
+                            logger.info(f"🌙 {symbol}: Overnight prediction suggests WAIT, holding off on BUY")
+                
                 # Store state for learning when position closes
-                if rl_signal == 'BUY':
+                if final_signal == 'BUY':
                     current_price = self.market_data.get_realtime_price(symbol)
                     if current_price:
                         self.trade_states[symbol] = {
                             'state': market_state,
-                            'action': rl_signal,
+                            'action': final_signal,
                             'entry_time': datetime.now(),
-                            'entry_price': current_price
+                            'entry_price': current_price,
+                            'overnight_prediction': overnight_prediction
                         }
                         self.execute_buy(symbol, current_price, account_value)
                         
@@ -333,6 +357,8 @@ class TradingBot:
             
             logger.info("🔍 Running overnight observation mode...")
             
+            overnight_predictions = []
+            
             # Analyze watchlist stocks
             for symbol in self.watchlist:
                 try:
@@ -343,6 +369,23 @@ class TradingBot:
                     
                     data = self.market_data.calculate_technical_indicators(data)
                     latest = data.iloc[-1]
+                    
+                    # OVERNIGHT PATTERN ANALYSIS
+                    overnight_analysis = self.overnight_analyzer.analyze_overnight_movement(symbol, data)
+                    if overnight_analysis:
+                        prediction = overnight_analysis.get('prediction', {})
+                        overnight_predictions.append({
+                            'symbol': symbol,
+                            'direction': prediction.get('direction', 'NEUTRAL'),
+                            'confidence': prediction.get('confidence', 0),
+                            'action': prediction.get('recommended_action', 'HOLD'),
+                            'reasoning': prediction.get('reasoning', '')
+                        })
+                        
+                        logger.info(f"🌙 {symbol}: Next-day prediction = {prediction.get('direction')} "
+                                   f"({prediction.get('confidence')}% conf), "
+                                   f"Action: {prediction.get('recommended_action')} - "
+                                   f"{prediction.get('reasoning')}")
                     
                     # Create market state for AI learning
                     market_state_data = {
@@ -365,9 +408,16 @@ class TradingBot:
                 except Exception as e:
                     logger.error(f"Error analyzing {symbol} in observation mode: {e}")
             
-            # Log observation summary
+            # Log overnight summary
+            overnight_summary = self.overnight_analyzer.get_overnight_summary()
+            logger.info(f"📈 Overnight Summary: {overnight_summary['bullish_predictions']} bullish, "
+                       f"{overnight_summary['bearish_predictions']} bearish, "
+                       f"{overnight_summary['neutral_predictions']} neutral | "
+                       f"{overnight_summary['high_confidence_calls']} high-confidence calls")
+            
+            # Log AI learning summary
             rl_stats = self.rl_agent.get_performance_stats()
-            logger.info(f"🧠 Observation: {rl_stats['states_learned']} states learned, "
+            logger.info(f"🧠 AI Learning: {rl_stats['states_learned']} states learned, "
                        f"Exploration: {rl_stats['exploration_rate']:.2%}")
             
         except Exception as e:
