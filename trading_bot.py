@@ -17,6 +17,7 @@ from logger import setup_logging, PerformanceTracker, AlertSystem
 from database import Database
 from reinforcement_learning import QLearningAgent, AdaptiveStrategySelector
 from overnight_analyzer import OvernightPatternAnalyzer
+from news_sentiment import NewsSentimentAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ class TradingBot:
         self.rl_agent = QLearningAgent(learning_rate=0.1, discount_factor=0.95, epsilon=0.2)
         self.strategy_selector = AdaptiveStrategySelector()
         self.overnight_analyzer = OvernightPatternAnalyzer()
+        self.news_analyzer = NewsSentimentAnalyzer()
         
         # State
         self.is_running = False
@@ -57,7 +59,7 @@ class TradingBot:
         logger.info(f"Strategy: {self.strategy.name}")
         logger.info(f"Watchlist: {', '.join(self.watchlist)}")
         logger.info(f"Paper Trading: {Config.is_paper_trading()}")
-        logger.info(f"AI Learning: ENABLED (Q-Learning + Adaptive Strategy + Overnight Analysis)")
+        logger.info(f"AI Learning: ENABLED (Q-Learning + Adaptive Strategy + Overnight Analysis + News Sentiment)")
         logger.info("="*60)
     
     def start(self):
@@ -166,6 +168,12 @@ class TradingBot:
                 continue  # Already have a position
             
             try:
+                # CHECK NEWS SENTIMENT FIRST - Avoid trading on bad news
+                should_avoid, avoid_reason = self.news_analyzer.should_avoid_trading(symbol)
+                if should_avoid:
+                    logger.warning(f"📰 {symbol}: Avoiding trade - {avoid_reason}")
+                    continue
+                
                 # Get historical data with indicators
                 data = self.market_data.get_historical_data(symbol, period='3mo', interval='1d')
                 if data.empty:
@@ -175,6 +183,9 @@ class TradingBot:
                 
                 # Check overnight prediction for this symbol
                 overnight_prediction = self.overnight_analyzer.get_next_day_prediction(symbol)
+                
+                # Get news sentiment
+                news_sentiment = self.news_analyzer.get_news_sentiment(symbol, hours=24)
                 
                 # Generate traditional signal
                 traditional_signal = self.strategy.generate_signals(symbol, data)
@@ -191,7 +202,7 @@ class TradingBot:
                 market_state = self.rl_agent.get_state(market_state_data)
                 rl_signal = self.rl_agent.get_action(market_state, traditional_signal)
                 
-                # Combine signals with overnight prediction
+                # Combine signals with overnight prediction and news sentiment
                 final_signal = rl_signal
                 
                 # If we have a high-confidence overnight prediction, use it to adjust decision
@@ -209,33 +220,57 @@ class TradingBot:
                             final_signal = 'HOLD'
                             logger.info(f"🌙 {symbol}: Overnight prediction suggests WAIT, holding off on BUY")
                 
+                # News sentiment influences final decision
+                if news_sentiment['sentiment_label'] == 'BULLISH' and news_sentiment['confidence'] > 65:
+                    if rl_signal == 'HOLD' and final_signal == 'HOLD':
+                        final_signal = 'BUY'
+                        logger.info(f"📰 {symbol}: Positive news sentiment ({news_sentiment['confidence']:.0f}% conf) "
+                                   f"upgraded to BUY - {news_sentiment['top_headlines'][0] if news_sentiment['top_headlines'] else ''}")
+                
+                # Log news context for BUY signals
+                if final_signal == 'BUY' and news_sentiment['article_count'] > 0:
+                    logger.info(f"📰 {symbol}: News sentiment = {news_sentiment['sentiment_label']} "
+                               f"({news_sentiment['article_count']} articles, {news_sentiment['confidence']:.0f}% conf)")
+                
                 # Store state for learning when position closes
                 if final_signal == 'BUY':
                     current_price = self.market_data.get_realtime_price(symbol)
                     if current_price:
+                        # Get sentiment boost for position sizing
+                        sentiment_boost = self.news_analyzer.get_sentiment_boost(symbol)
+                        
                         self.trade_states[symbol] = {
                             'state': market_state,
                             'action': final_signal,
                             'entry_time': datetime.now(),
                             'entry_price': current_price,
-                            'overnight_prediction': overnight_prediction
+                            'overnight_prediction': overnight_prediction,
+                            'news_sentiment': news_sentiment,
+                            'sentiment_boost': sentiment_boost
                         }
-                        self.execute_buy(symbol, current_price, account_value)
+                        self.execute_buy(symbol, current_price, account_value, sentiment_boost)
                         
             except Exception as e:
                 logger.error(f"Error scanning {symbol}: {e}")
     
-    def execute_buy(self, symbol: str, price: float, account_value: float):
-        """Execute a buy order."""
+    def execute_buy(self, symbol: str, price: float, account_value: float, sentiment_boost: float = 1.0):
+        """Execute a buy order with optional sentiment-based position sizing."""
         try:
-            # Calculate position size
-            shares = self.risk_manager.calculate_position_size(
+            # Calculate position size with sentiment adjustment
+            base_shares = self.risk_manager.calculate_position_size(
                 symbol, price, account_value
             )
+            
+            # Adjust position size based on news sentiment
+            shares = int(base_shares * sentiment_boost)
             
             if shares <= 0:
                 logger.info(f"Position size too small for {symbol}")
                 return
+            
+            if sentiment_boost != 1.0:
+                logger.info(f"📊 {symbol}: Position size adjusted by sentiment boost: {sentiment_boost:.2f}x "
+                           f"({base_shares} → {shares} shares)")
             
             # Place order
             order = self.broker.place_market_order(symbol, shares, 'buy')
@@ -471,6 +506,22 @@ class TradingBot:
         logger.info(f"Average Reward: {rl_stats['avg_reward']:.3f}")
         logger.info(f"Current Strategy: {self.strategy_selector.current_strategy}")
         logger.info(f"Exploration Rate: {rl_stats['exploration_rate']:.2f}")
+        
+        # News sentiment summary
+        logger.info("="*60)
+        logger.info("NEWS SENTIMENT SUMMARY")
+        logger.info("="*60)
+        news_summary = self.news_analyzer.get_news_summary(self.watchlist)
+        logger.info(f"Bullish Symbols: {len(news_summary['bullish_symbols'])}")
+        for item in news_summary['bullish_symbols'][:3]:
+            logger.info(f"  📈 {item['symbol']}: {item['confidence']:.0f}% - {item['headline'][:80] if item['headline'] else ''}")
+        
+        logger.info(f"Bearish Symbols: {len(news_summary['bearish_symbols'])}")
+        for item in news_summary['bearish_symbols'][:3]:
+            logger.info(f"  📉 {item['symbol']}: {item['confidence']:.0f}% - {item['headline'][:80] if item['headline'] else ''}")
+        
+        if news_summary['high_news_volume']:
+            logger.info(f"High News Volume: {', '.join(news_summary['high_news_volume'])}")
         
         logger.info("="*60)
     
