@@ -18,6 +18,14 @@ from database import Database
 from reinforcement_learning import QLearningAgent, AdaptiveStrategySelector
 from overnight_analyzer import OvernightPatternAnalyzer
 from news_sentiment import NewsSentimentAnalyzer
+from options_flow_analyzer import OptionsFlowAnalyzer
+from insider_tracker import InsiderTracker
+from social_sentiment import SocialSentimentAnalyzer
+from short_interest_tracker import ShortInterestTracker
+from economic_calendar import EconomicCalendar
+from fred_analyzer import FREDAnalyzer
+from crypto_correlation import CryptoCorrelationTracker
+from trends_analyzer import GoogleTrendsAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +56,17 @@ class TradingBot:
         self.rl_agent = QLearningAgent(learning_rate=0.1, discount_factor=0.95, epsilon=0.2)
         self.strategy_selector = AdaptiveStrategySelector()
         self.overnight_analyzer = OvernightPatternAnalyzer()
+        
+        # Multi-source intelligence analyzers
         self.news_analyzer = NewsSentimentAnalyzer()
+        self.options_analyzer = OptionsFlowAnalyzer()
+        self.insider_tracker = InsiderTracker()
+        self.social_analyzer = SocialSentimentAnalyzer()
+        self.short_tracker = ShortInterestTracker()
+        self.economic_calendar = EconomicCalendar()
+        self.fred_analyzer = FREDAnalyzer()
+        self.crypto_tracker = CryptoCorrelationTracker()
+        self.trends_analyzer = GoogleTrendsAnalyzer()
         
         # State
         self.is_running = False
@@ -59,7 +77,8 @@ class TradingBot:
         logger.info(f"Strategy: {self.strategy.name}")
         logger.info(f"Watchlist: {', '.join(self.watchlist)}")
         logger.info(f"Paper Trading: {Config.is_paper_trading()}")
-        logger.info(f"AI Learning: ENABLED (Q-Learning + Adaptive Strategy + Overnight Analysis + News Sentiment)")
+        logger.info(f"AI Learning: ENABLED (Q-Learning + Adaptive Strategy)")
+        logger.info(f"Intelligence Sources: 10+ APIs (News, Options, Insiders, Social, Economic, Crypto, Trends)")
         logger.info("="*60)
     
     def start(self):
@@ -181,11 +200,8 @@ class TradingBot:
                 
                 data = self.market_data.calculate_technical_indicators(data)
                 
-                # Check overnight prediction for this symbol
-                overnight_prediction = self.overnight_analyzer.get_next_day_prediction(symbol)
-                
-                # Get news sentiment
-                news_sentiment = self.news_analyzer.get_news_sentiment(symbol, hours=24)
+                # UNIFIED INTELLIGENCE GATHERING - Collect all data sources
+                intelligence = self.gather_intelligence(symbol, data)
                 
                 # Generate traditional signal
                 traditional_signal = self.strategy.generate_signals(symbol, data)
@@ -202,53 +218,28 @@ class TradingBot:
                 market_state = self.rl_agent.get_state(market_state_data)
                 rl_signal = self.rl_agent.get_action(market_state, traditional_signal)
                 
-                # Combine signals with overnight prediction and news sentiment
-                final_signal = rl_signal
-                
-                # If we have a high-confidence overnight prediction, use it to adjust decision
-                if overnight_prediction:
-                    overnight_action = overnight_prediction.get('recommended_action', 'HOLD')
-                    confidence = overnight_prediction.get('confidence', 0)
-                    
-                    if confidence > 70:
-                        # High confidence overnight prediction influences decision
-                        if overnight_action == 'BUY' and rl_signal == 'HOLD':
-                            final_signal = 'BUY'
-                            logger.info(f"🌙 {symbol}: Overnight prediction upgraded HOLD to BUY "
-                                       f"(confidence: {confidence}%)")
-                        elif overnight_action == 'WAIT' and rl_signal == 'BUY':
-                            final_signal = 'HOLD'
-                            logger.info(f"🌙 {symbol}: Overnight prediction suggests WAIT, holding off on BUY")
-                
-                # News sentiment influences final decision
-                if news_sentiment['sentiment_label'] == 'BULLISH' and news_sentiment['confidence'] > 65:
-                    if rl_signal == 'HOLD' and final_signal == 'HOLD':
-                        final_signal = 'BUY'
-                        logger.info(f"📰 {symbol}: Positive news sentiment ({news_sentiment['confidence']:.0f}% conf) "
-                                   f"upgraded to BUY - {news_sentiment['top_headlines'][0] if news_sentiment['top_headlines'] else ''}")
-                
-                # Log news context for BUY signals
-                if final_signal == 'BUY' and news_sentiment['article_count'] > 0:
-                    logger.info(f"📰 {symbol}: News sentiment = {news_sentiment['sentiment_label']} "
-                               f"({news_sentiment['article_count']} articles, {news_sentiment['confidence']:.0f}% conf)")
+                # UNIFIED DECISION ENGINE - Combine all intelligence sources
+                final_signal, confidence_score = self.make_intelligent_decision(
+                    symbol, rl_signal, intelligence
+                )
                 
                 # Store state for learning when position closes
                 if final_signal == 'BUY':
                     current_price = self.market_data.get_realtime_price(symbol)
                     if current_price:
-                        # Get sentiment boost for position sizing
-                        sentiment_boost = self.news_analyzer.get_sentiment_boost(symbol)
+                        # Calculate unified position size boost from all sources
+                        unified_boost = self.calculate_unified_boost(intelligence)
                         
                         self.trade_states[symbol] = {
                             'state': market_state,
                             'action': final_signal,
                             'entry_time': datetime.now(),
                             'entry_price': current_price,
-                            'overnight_prediction': overnight_prediction,
-                            'news_sentiment': news_sentiment,
-                            'sentiment_boost': sentiment_boost
+                            'intelligence': intelligence,
+                            'confidence_score': confidence_score,
+                            'position_boost': unified_boost
                         }
-                        self.execute_buy(symbol, current_price, account_value, sentiment_boost)
+                        self.execute_buy(symbol, current_price, account_value, unified_boost)
                         
             except Exception as e:
                 logger.error(f"Error scanning {symbol}: {e}")
@@ -507,23 +498,273 @@ class TradingBot:
         logger.info(f"Current Strategy: {self.strategy_selector.current_strategy}")
         logger.info(f"Exploration Rate: {rl_stats['exploration_rate']:.2f}")
         
-        # News sentiment summary
+        # Multi-source Intelligence Summary
         logger.info("="*60)
-        logger.info("NEWS SENTIMENT SUMMARY")
+        logger.info("MULTI-SOURCE INTELLIGENCE SUMMARY")
         logger.info("="*60)
+        
+        # News sentiment
         news_summary = self.news_analyzer.get_news_summary(self.watchlist)
-        logger.info(f"Bullish Symbols: {len(news_summary['bullish_symbols'])}")
-        for item in news_summary['bullish_symbols'][:3]:
-            logger.info(f"  📈 {item['symbol']}: {item['confidence']:.0f}% - {item['headline'][:80] if item['headline'] else ''}")
+        logger.info(f"📰 News - Bullish: {len(news_summary['bullish_symbols'])}, Bearish: {len(news_summary['bearish_symbols'])}")
         
-        logger.info(f"Bearish Symbols: {len(news_summary['bearish_symbols'])}")
-        for item in news_summary['bearish_symbols'][:3]:
-            logger.info(f"  📉 {item['symbol']}: {item['confidence']:.0f}% - {item['headline'][:80] if item['headline'] else ''}")
+        # Options flow
+        options_summary = self.options_analyzer.get_summary(self.watchlist)
+        logger.info(f"📊 Options - Bullish Flows: {len(options_summary['bullish_signals'])}, "
+                   f"Whale Activity: {len(options_summary['whale_activity'])}")
         
-        if news_summary['high_news_volume']:
-            logger.info(f"High News Volume: {', '.join(news_summary['high_news_volume'])}")
+        # Insider trading
+        insider_summary = self.insider_tracker.get_summary(self.watchlist)
+        logger.info(f"👔 Insiders - Buying: {len(insider_summary['insider_buying'])}, "
+                   f"Selling: {len(insider_summary['insider_selling'])}")
+        
+        # Social sentiment
+        social_summary = self.social_analyzer.get_summary(self.watchlist)
+        logger.info(f"💬 Social - Trending: {len(social_summary['trending'])}, "
+                   f"Bullish Buzz: {len(social_summary['bullish_buzz'])}")
+        
+        # Short interest
+        short_summary = self.short_tracker.get_summary(self.watchlist)
+        logger.info(f"🔥 Short Squeeze - Active: {len(short_summary['active_squeezes'])}, "
+                   f"Potential: {len(short_summary['squeeze_candidates'])}")
+        
+        # Economic events
+        econ_events = self.economic_calendar.get_todays_events()
+        logger.info(f"📅 Economic - Events Today: {econ_events['event_count']}, "
+                   f"Risk Level: {econ_events['risk_level']}")
+        
+        # Macro regime
+        macro = self.fred_analyzer.get_economic_regime()
+        logger.info(f"🌍 Macro - Regime: {macro['regime']}, Confidence: {macro['confidence']}%")
+        
+        # Crypto sentiment
+        crypto = self.crypto_tracker.get_crypto_sentiment()
+        logger.info(f"₿ Crypto - Signal: {crypto['signal']}, BTC 24h: {crypto['btc_change_24h']:+.1f}%")
         
         logger.info("="*60)
+    
+    def gather_intelligence(self, symbol: str, data) -> Dict:
+        """
+        Gather intelligence from all sources for a symbol
+        Returns: Comprehensive intelligence dict
+        """
+        intelligence = {}
+        
+        try:
+            # Overnight patterns
+            intelligence['overnight'] = self.overnight_analyzer.get_next_day_prediction(symbol)
+            
+            # News sentiment
+            intelligence['news'] = self.news_analyzer.get_news_sentiment(symbol, hours=24)
+            
+            # Options flow
+            intelligence['options'] = self.options_analyzer.get_unusual_options_activity(symbol)
+            
+            # Insider trading
+            intelligence['insiders'] = self.insider_tracker.get_insider_activity(symbol)
+            
+            # Social sentiment
+            intelligence['social'] = self.social_analyzer.get_social_sentiment(symbol)
+            
+            # Short interest
+            intelligence['short'] = self.short_tracker.get_short_interest_analysis(symbol)
+            
+            # Google Trends
+            intelligence['trends'] = self.trends_analyzer.get_search_interest(symbol)
+            
+            # Economic/macro (same for all symbols, cached)
+            intelligence['economic'] = self.economic_calendar.get_todays_events()
+            intelligence['macro'] = self.fred_analyzer.get_economic_regime()
+            intelligence['crypto'] = self.crypto_tracker.get_crypto_sentiment()
+            
+        except Exception as e:
+            logger.error(f"Error gathering intelligence for {symbol}: {e}")
+        
+        return intelligence
+    
+    def make_intelligent_decision(self, symbol: str, rl_signal: str, 
+                                  intelligence: Dict) -> tuple:
+        """
+        Make trading decision combining RL signal with all intelligence sources
+        Returns: (final_signal, confidence_score)
+        """
+        final_signal = rl_signal
+        confidence_score = 50  # Base confidence
+        
+        # Check for absolute blockers first
+        
+        # 1. Economic events - avoid trading on high-risk days
+        if intelligence.get('economic', {}).get('avoid_trading', False):
+            logger.info(f"🚫 {symbol}: Avoiding trade - {intelligence['economic']['reasons'][0]}")
+            return 'HOLD', 0
+        
+        # 2. News - avoid on strong bearish news
+        news = intelligence.get('news', {})
+        should_avoid_news, news_reason = self.news_analyzer.should_avoid_trading(symbol)
+        if should_avoid_news:
+            logger.info(f"📰 {symbol}: {news_reason}")
+            return 'HOLD', 0
+        
+        # Now collect bullish/bearish signals with weights
+        bullish_score = 0
+        bearish_score = 0
+        signals_log = []
+        
+        # Overnight prediction (weight: 15%)
+        overnight = intelligence.get('overnight', {})
+        if overnight and overnight.get('confidence', 0) > 60:
+            action = overnight.get('recommended_action', 'HOLD')
+            conf = overnight['confidence']
+            if action == 'BUY':
+                bullish_score += 15 * (conf / 100)
+                signals_log.append(f"🌙 Overnight BUY ({conf}%)")
+            elif action == 'WAIT':
+                bearish_score += 10 * (conf / 100)
+                signals_log.append(f"🌙 Overnight WAIT ({conf}%)")
+        
+        # News sentiment (weight: 20%)
+        if news.get('sentiment_label') == 'BULLISH' and news.get('confidence', 0) > 60:
+            conf = news['confidence']
+            bullish_score += 20 * (conf / 100)
+            signals_log.append(f"📰 Bullish News ({conf}%)")
+        elif news.get('sentiment_label') == 'BEARISH' and news.get('confidence', 0) > 60:
+            conf = news['confidence']
+            bearish_score += 15 * (conf / 100)
+            signals_log.append(f"📰 Bearish News ({conf}%)")
+        
+        # Options flow (weight: 18%) - institutional signal
+        options = intelligence.get('options', {})
+        if options.get('signal') == 'BULLISH' and options.get('confidence', 0) > 65:
+            conf = options['confidence']
+            bullish_score += 18 * (conf / 100)
+            signals_log.append(f"📊 Bullish Options ({conf}%)")
+        elif options.get('signal') == 'BEARISH' and options.get('confidence', 0) > 65:
+            conf = options['confidence']
+            bearish_score += 18 * (conf / 100)
+            signals_log.append(f"📊 Bearish Options ({conf}%)")
+        
+        # Insider trading (weight: 17%) - very strong signal
+        insiders = intelligence.get('insiders', {})
+        if insiders.get('signal') == 'BULLISH' and insiders.get('confidence', 0) > 70:
+            conf = insiders['confidence']
+            bullish_score += 17 * (conf / 100)
+            signals_log.append(f"👔 Insider Buying ({insiders.get('buy_count', 0)} txns)")
+        elif insiders.get('signal') == 'BEARISH' and insiders.get('confidence', 0) > 65:
+            bearish_score += 12 * (insiders['confidence'] / 100)
+            signals_log.append(f"👔 Insider Selling ({insiders.get('sell_count', 0)} txns)")
+        
+        # Social sentiment (weight: 12%)
+        social = intelligence.get('social', {})
+        if social.get('signal') == 'BULLISH' and social.get('confidence', 0) > 60:
+            bullish_score += 12 * (social['confidence'] / 100)
+            signals_log.append(f"💬 Social Buzz ({social.get('mentions', 0)} mentions)")
+        
+        # Short squeeze (weight: 10%)
+        short = intelligence.get('short', {})
+        if short.get('signal') == 'ACTIVE_SQUEEZE' and short.get('confidence', 0) > 65:
+            bullish_score += 10 * (short['confidence'] / 100)
+            signals_log.append(f"🔥 Squeeze Active ({short.get('short_float', 0)}% short)")
+        
+        # Google Trends (weight: 8%)
+        trends = intelligence.get('trends', {})
+        if trends.get('signal') == 'SURGING' and trends.get('confidence', 0) > 60:
+            bullish_score += 8 * (trends['confidence'] / 100)
+            signals_log.append(f"🔍 Search Surge")
+        
+        # Calculate final confidence and decision
+        net_score = bullish_score - bearish_score
+        confidence_score = int(50 + net_score)  # Base 50 + net signals
+        confidence_score = max(0, min(100, confidence_score))
+        
+        # Decision logic
+        if rl_signal == 'BUY':
+            # RL wants to buy - check if intelligence agrees
+            if net_score < -15:  # Strong bearish signals
+                final_signal = 'HOLD'
+                logger.info(f"⚠️ {symbol}: RL suggested BUY but strong bearish signals "
+                           f"(score: {net_score:.1f}) - HOLDING")
+            else:
+                final_signal = 'BUY'
+                if signals_log:
+                    logger.info(f"✅ {symbol}: BUY with {confidence_score}% confidence - {', '.join(signals_log[:3])}")
+        
+        elif rl_signal == 'HOLD':
+            # RL wants to hold - check if strong bullish signals override
+            if net_score > 25:  # Very strong bullish signals
+                final_signal = 'BUY'
+                logger.info(f"🚀 {symbol}: Intelligence override - Upgrading to BUY "
+                           f"(score: +{net_score:.1f}) - {', '.join(signals_log[:3])}")
+            else:
+                final_signal = 'HOLD'
+        
+        else:  # SELL
+            final_signal = 'SELL'
+        
+        return final_signal, confidence_score
+    
+    def calculate_unified_boost(self, intelligence: Dict) -> float:
+        """
+        Calculate unified position size multiplier from all intelligence sources
+        Returns: 0.4 to 2.0 multiplier (capped for safety)
+        """
+        boost = 1.0
+        
+        # News sentiment boost
+        news_boost = self.news_analyzer.get_sentiment_boost(
+            intelligence.get('news', {}).get('symbol', '')
+        ) if intelligence.get('news') else 1.0
+        
+        # Options flow boost
+        options_boost = self.options_analyzer.get_options_boost(
+            intelligence.get('options', {}).get('symbol', '')
+        ) if intelligence.get('options') else 1.0
+        
+        # Insider trading boost (strongest signal)
+        insider_boost = self.insider_tracker.get_insider_boost(
+            intelligence.get('insiders', {}).get('symbol', '')
+        ) if intelligence.get('insiders') else 1.0
+        
+        # Social sentiment boost
+        social_boost = self.social_analyzer.get_social_boost(
+            intelligence.get('social', {}).get('symbol', '')
+        ) if intelligence.get('social') else 1.0
+        
+        # Short squeeze boost (risky but potentially huge)
+        squeeze_boost = self.short_tracker.get_squeeze_boost(
+            intelligence.get('short', {}).get('symbol', '')
+        ) if intelligence.get('short') else 1.0
+        
+        # Google Trends boost
+        trends_boost = self.trends_analyzer.get_trends_boost(
+            intelligence.get('trends', {}).get('symbol', '')
+        ) if intelligence.get('trends') else 1.0
+        
+        # Economic event risk reduction
+        econ_risk = self.economic_calendar.get_event_risk_factor()
+        
+        # Macro regime adjustment
+        macro_risk = self.fred_analyzer.get_macro_risk_factor()
+        
+        # Crypto correlation
+        crypto_risk = self.crypto_tracker.get_crypto_risk_factor()
+        
+        # Combine boosts (average the individual source boosts)
+        individual_boosts = [news_boost, options_boost, insider_boost, social_boost, 
+                            squeeze_boost, trends_boost]
+        avg_boost = sum(individual_boosts) / len(individual_boosts)
+        
+        # Apply macro/risk adjustments
+        boost = avg_boost * econ_risk * macro_risk * crypto_risk
+        
+        # Safety cap: 0.4x to 2.0x
+        boost = max(0.4, min(2.0, boost))
+        
+        if boost != 1.0:
+            logger.info(f"📊 Position size multiplier: {boost:.2f}x "
+                       f"(News:{news_boost:.2f} Opt:{options_boost:.2f} "
+                       f"Ins:{insider_boost:.2f} Soc:{social_boost:.2f} "
+                       f"Macro:{macro_risk:.2f})")
+        
+        return boost
     
     def stop(self):
         """Stop the trading bot gracefully."""
