@@ -176,11 +176,11 @@ class TradingBot:
         positions = self.broker.get_positions()
         position_symbols = {p['symbol'] for p in positions}
         
-        # Limit number of positions
-        max_positions = 5
-        if len(positions) >= max_positions:
-            logger.info(f"Maximum positions ({max_positions}) reached, skipping scan")
-            return
+        # Portfolio allocation by risk tier (NO POSITION LIMITS)
+        # 20% High Risk - short-term plays, high conviction
+        # 30% Medium Risk - swing trades, moderate conviction
+        # 50% Low Risk - long-term holds, stable growth
+        # Bot can take unlimited positions, but capital is allocated by risk tier
         
         for symbol in self.watchlist:
             if symbol in position_symbols:
@@ -230,6 +230,9 @@ class TradingBot:
                         # Calculate unified position size boost from all sources
                         unified_boost = self.calculate_unified_boost(intelligence)
                         
+                        # Determine risk tier based on intelligence confidence
+                        risk_tier = self.classify_risk_tier(confidence_score, intelligence)
+                        
                         self.trade_states[symbol] = {
                             'state': market_state,
                             'action': final_signal,
@@ -237,30 +240,64 @@ class TradingBot:
                             'entry_price': current_price,
                             'intelligence': intelligence,
                             'confidence_score': confidence_score,
-                            'position_boost': unified_boost
+                            'position_boost': unified_boost,
+                            'risk_tier': risk_tier
                         }
-                        self.execute_buy(symbol, current_price, account_value, unified_boost)
+                        self.execute_buy(symbol, current_price, account_value, unified_boost, risk_tier)
                         
             except Exception as e:
                 logger.error(f"Error scanning {symbol}: {e}")
     
-    def execute_buy(self, symbol: str, price: float, account_value: float, sentiment_boost: float = 1.0):
-        """Execute a buy order with optional sentiment-based position sizing."""
+    def execute_buy(self, symbol: str, price: float, account_value: float, 
+                    sentiment_boost: float = 1.0, risk_tier: str = 'MEDIUM'):
+        """Execute a buy order with risk-based position sizing."""
         try:
-            # Calculate position size with sentiment adjustment
-            base_shares = self.risk_manager.calculate_position_size(
-                symbol, price, account_value
-            )
+            # Risk-based capital allocation (NO POSITION LIMITS)
+            # HIGH RISK: 20% of total capital
+            # MEDIUM RISK: 30% of total capital
+            # LOW RISK: 50% of total capital
             
-            # Adjust position size based on news sentiment
+            # Calculate how much capital is allocated to each risk tier
+            risk_capital_allocation = {
+                'HIGH': account_value * 0.20,    # 20% of total capital
+                'MEDIUM': account_value * 0.30,  # 30% of total capital
+                'LOW': account_value * 0.50      # 50% of total capital
+            }
+            
+            # Get current positions to calculate used capital per tier
+            positions = self.broker.get_positions()
+            used_capital = {'HIGH': 0, 'MEDIUM': 0, 'LOW': 0}
+            
+            for pos in positions:
+                pos_tier = self.trade_states.get(pos['symbol'], {}).get('risk_tier', 'MEDIUM')
+                used_capital[pos_tier] += abs(pos['market_value'])
+            
+            # Check if we have capital available in this risk tier
+            available_capital = risk_capital_allocation[risk_tier] - used_capital[risk_tier]
+            
+            if available_capital <= 0:
+                logger.info(f"🚫 {symbol}: No capital available in {risk_tier} RISK tier "
+                           f"(${used_capital[risk_tier]:,.0f} / ${risk_capital_allocation[risk_tier]:,.0f} used)")
+                return
+            
+            # Calculate position size (use 2% risk per trade within available capital)
+            max_position_value = min(available_capital * 0.10, available_capital)  # 10% of available or all available
+            base_shares = int(max_position_value / price)
+            
+            # Apply intelligence boost
             shares = int(base_shares * sentiment_boost)
             
             if shares <= 0:
                 logger.info(f"Position size too small for {symbol}")
                 return
             
+            position_value = shares * price
+            tier_usage_pct = (used_capital[risk_tier] + position_value) / risk_capital_allocation[risk_tier] * 100
+            
+            logger.info(f"🎯 {symbol}: {risk_tier} RISK tier - ${position_value:,.0f} "
+                       f"({tier_usage_pct:.1f}% of {risk_tier} allocation)")
             if sentiment_boost != 1.0:
-                logger.info(f"📊 {symbol}: Position size adjusted by sentiment boost: {sentiment_boost:.2f}x "
+                logger.info(f"📊 {symbol}: Intelligence boost: {sentiment_boost:.2f}x "
                            f"({base_shares} → {shares} shares)")
             
             # Place order
@@ -765,6 +802,51 @@ class TradingBot:
                        f"Macro:{macro_risk:.2f})")
         
         return boost
+    
+    def classify_risk_tier(self, confidence_score: int, intelligence: Dict) -> str:
+        """
+        Classify trade into risk tier based on intelligence confidence
+        HIGH RISK: 20% allocation - Short-term plays, high volatility
+        MEDIUM RISK: 30% allocation - Swing trades, moderate confidence  
+        LOW RISK: 50% allocation - Long-term holds, stable growth
+        """
+        # Factors for HIGH RISK classification
+        high_risk_factors = 0
+        
+        # Short squeeze active = high risk, high reward
+        if intelligence.get('short', {}).get('signal') == 'ACTIVE_SQUEEZE':
+            high_risk_factors += 2
+        
+        # Social media frenzy = high risk (retail FOMO)
+        if intelligence.get('social', {}).get('mentions', 0) > 30:
+            high_risk_factors += 1
+        
+        # Google Trends surging = high risk (momentum play)
+        if intelligence.get('trends', {}).get('signal') == 'SURGING':
+            high_risk_factors += 1
+        
+        # Factors for LOW RISK classification
+        low_risk_factors = 0
+        
+        # Insider buying = low risk (fundamentals)
+        if intelligence.get('insiders', {}).get('buy_count', 0) >= 2:
+            low_risk_factors += 2
+        
+        # Positive macro regime = low risk environment
+        if intelligence.get('macro', {}).get('regime') == 'BULLISH':
+            low_risk_factors += 1
+        
+        # High confidence + multiple confirming signals = lower risk
+        if confidence_score > 85:
+            low_risk_factors += 1
+        
+        # Classification logic
+        if high_risk_factors >= 2:
+            return 'HIGH'  # Volatile, short-term opportunity
+        elif low_risk_factors >= 2:
+            return 'LOW'   # Stable, long-term growth
+        else:
+            return 'MEDIUM'  # Standard swing trade
     
     def stop(self):
         """Stop the trading bot gracefully."""
