@@ -88,7 +88,8 @@ class TradingBot:
             market_status = self.market_data.get_market_status()
             
             if not market_status['is_open']:
-                logger.debug("Market is closed, skipping trading cycle")
+                logger.debug("Market is closed, running observation mode")
+                self.observation_mode()
                 return
             
             logger.info("Running trading cycle...")
@@ -318,6 +319,59 @@ class TradingBot:
                 
         except Exception as e:
             logger.error(f"Error closing position for {symbol}: {e}")
+    
+    def observation_mode(self):
+        """
+        Run analytics during market closed hours.
+        Analyzes market data and trains AI without executing trades.
+        """
+        try:
+            # Only run detailed observation every 15 minutes to save resources
+            current_minute = datetime.now().minute
+            if current_minute % 15 != 0:
+                return
+            
+            logger.info("🔍 Running overnight observation mode...")
+            
+            # Analyze watchlist stocks
+            for symbol in self.watchlist:
+                try:
+                    # Get recent data (even when market closed, we can analyze historical)
+                    data = self.market_data.get_historical_data(symbol, period='5d', interval='1h')
+                    if data.empty:
+                        continue
+                    
+                    data = self.market_data.calculate_technical_indicators(data)
+                    latest = data.iloc[-1]
+                    
+                    # Create market state for AI learning
+                    market_state_data = {
+                        'RSI': latest.get('RSI', 50),
+                        'MACD': latest.get('MACD', 0),
+                        'price_change_pct': ((latest['Close'] - data.iloc[-2]['Close']) / data.iloc[-2]['Close']) * 100,
+                        'volume_ratio': latest.get('Volume', 0) / latest.get('Volume_MA', 1) if 'Volume_MA' in latest else 1.0
+                    }
+                    
+                    market_state = self.rl_agent.get_state(market_state_data)
+                    
+                    # Get traditional signal (for learning, not trading)
+                    signal = self.strategy.generate_signals(symbol, data)
+                    
+                    # Let AI observe what it would do (no actual trade)
+                    ai_action = self.rl_agent.get_action(market_state, signal)
+                    
+                    logger.debug(f"📊 {symbol}: Signal={signal}, AI would={ai_action}, RSI={market_state_data['RSI']:.1f}")
+                    
+                except Exception as e:
+                    logger.error(f"Error analyzing {symbol} in observation mode: {e}")
+            
+            # Log observation summary
+            rl_stats = self.rl_agent.get_performance_stats()
+            logger.info(f"🧠 Observation: {rl_stats['states_learned']} states learned, "
+                       f"Exploration: {rl_stats['exploration_rate']:.2%}")
+            
+        except Exception as e:
+            logger.error(f"Error in observation mode: {e}")
     
     def save_portfolio_snapshot(self, account_value: float):
         """Save current portfolio state to database."""
