@@ -27,3 +27,7 @@ requests>=2.31.0
 
 # Logging and monitoring
 colorlog>=6.7.0
+
+# Web dashboard
+flask>=3.0.0
+flask-cors>=4.0.0

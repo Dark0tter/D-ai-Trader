@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dai Trader Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+</head>
+<body>
+    <div class="dashboard">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1>🤖 Dai Trader Dashboard</h1>
+                <div class="header-actions">
+                    <span id="last-update" class="update-time">Last updated: --</span>
+                    <a href="/logout" class="btn-logout">Logout</a>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="container">
+            <!-- Account Overview -->
+            <section class="section">
+                <h2>Account Overview</h2>
+                <div class="cards">
+                    <div class="card">
+                        <div class="card-header">Portfolio Value</div>
+                        <div class="card-value" id="portfolio-value">$0.00</div>
+                        <div class="card-change" id="portfolio-change">--</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">Cash Available</div>
+                        <div class="card-value" id="cash-value">$0.00</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">Buying Power</div>
+                        <div class="card-value" id="buying-power">$0.00</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">Active Positions</div>
+                        <div class="card-value" id="position-count">0</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Performance Metrics -->
+            <section class="section">
+                <h2>Performance Metrics</h2>
+                <div class="cards">
+                    <div class="card">
+                        <div class="card-header">Total Trades</div>
+                        <div class="card-value" id="total-trades">0</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">Win Rate</div>
+                        <div class="card-value" id="win-rate">0%</div>
+                        <div class="card-subtext"><span id="winning-trades">0</span> wins / <span id="losing-trades">0</span> losses</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">Total P&L</div>
+                        <div class="card-value" id="total-pnl">$0.00</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">Avg P&L per Trade</div>
+                        <div class="card-value" id="avg-pnl">$0.00</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- AI Learning Stats -->
+            <section class="section">
+                <h2>🧠 AI Learning Statistics</h2>
+                <div class="cards">
+                    <div class="card">
+                        <div class="card-header">States Learned</div>
+                        <div class="card-value" id="states-learned">0</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">AI Win Rate</div>
+                        <div class="card-value" id="ai-win-rate">0%</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">Avg Reward</div>
+                        <div class="card-value" id="avg-reward">0.000</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">Exploration Rate</div>
+                        <div class="card-value" id="exploration-rate">0%</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Current Positions -->
+            <section class="section">
+                <h2>Current Positions</h2>
+                <div class="table-container">
+                    <table id="positions-table">
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Qty</th>
+                                <th>Avg Price</th>
+                                <th>Current Price</th>
+                                <th>Market Value</th>
+                                <th>P&L</th>
+                                <th>P&L %</th>
+                            </tr>
+                        </thead>
+                        <tbody id="positions-body">
+                            <tr>
+                                <td colspan="7" class="no-data">No open positions</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Recent Trades -->
+            <section class="section">
+                <h2>Recent Trades</h2>
+                <div class="table-container">
+                    <table id="trades-table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Symbol</th>
+                                <th>Side</th>
+                                <th>Qty</th>
+                                <th>Entry</th>
+                                <th>Exit</th>
+                                <th>P&L</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="trades-body">
+                            <tr>
+                                <td colspan="8" class="no-data">No trades yet</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Portfolio Chart -->
+            <section class="section">
+                <h2>Portfolio Performance</h2>
+                <div class="chart-container">
+                    <canvas id="portfolio-chart"></canvas>
+                </div>
+            </section>
+
+            <!-- Bot Configuration -->
+            <section class="section">
+                <h2>Bot Configuration</h2>
+                <div class="config-grid">
+                    <div class="config-item">
+                        <strong>Trading Mode:</strong>
+                        <span id="trading-mode">--</span>
+                    </div>
+                    <div class="config-item">
+                        <strong>Strategy:</strong>
+                        <span id="strategy">--</span>
+                    </div>
+                    <div class="config-item">
+                        <strong>Watchlist:</strong>
+                        <span id="watchlist">--</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Live Logs -->
+            <section class="section">
+                <h2>Recent Logs</h2>
+                <div class="logs-container" id="logs-container">
+                    <div class="log-entry">Loading logs...</div>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>

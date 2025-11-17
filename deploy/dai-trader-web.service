@@ -1,0 +1,18 @@
+[Unit]
+Description=Dai Trader Web Dashboard
+After=network.target dai-trader.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/dai-trader
+Environment="PATH=/root/dai-trader/venv/bin"
+Environment="DASHBOARD_PASSWORD=dai-trader-2025"
+Environment="DASHBOARD_PORT=5000"
+Environment="DASHBOARD_HOST=0.0.0.0"
+ExecStart=/root/dai-trader/venv/bin/python /root/dai-trader/web_dashboard.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
