@@ -105,12 +105,12 @@ class PerformanceTracker:
         print("\n" + "="*50)
         print("PERFORMANCE SUMMARY")
         print("="*50)
-        print(f"Total Trades:       {summary['total_trades']}")
-        print(f"Total P&L:          ${summary['total_pnl']:,.2f}")
-        print(f"Winning Trades:     {summary['winning_trades']}")
-        print(f"Win Rate:           {summary['win_rate']:.2f}%")
-        print(f"Average P&L:        ${summary['avg_pnl']:.2f}")
-        print(f"Runtime:            {summary['runtime']:.2f} hours")
+        print(f"Total Trades:       {summary.get('total_trades', 0)}")
+        print(f"Total P&L:          ${summary.get('total_pnl', 0):,.2f}")
+        print(f"Winning Trades:     {summary.get('winning_trades', 0)}")
+        print(f"Win Rate:           {summary.get('win_rate', 0):.2f}%")
+        print(f"Average P&L:        ${summary.get('avg_pnl', 0):.2f}")
+        print(f"Runtime:            {summary.get('runtime', 0):.2f} hours")
         print("="*50 + "\n")
 
 class AlertSystem:
